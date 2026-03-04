@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>图形标注 - 豆包 Vision 检测</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            margin: 0;
+            padding: 24px;
+            min-height: 100vh;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            color: #888;
+            font-size: 0.9rem;
+            margin-bottom: 20px;
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .controls label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .btn {
+            padding: 10px 18px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            background: #4361ee;
+            color: #fff;
+        }
+
+        .btn:hover {
+            background: #3a56d4;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn.secondary {
+            background: #444;
+        }
+
+        .btn.secondary:hover {
+            background: #555;
+        }
+
+        .video-wrap {
+            position: relative;
+            display: inline-block;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            max-width: 480px;
+        }
+
+        .video-wrap video {
+            display: block;
+            max-width: 100%;
+            height: auto;
+        }
+
+        .status {
+            margin-top: 12px;
+            padding: 10px 14px;
+            background: #252540;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #aaa;
+        }
+
+        .status.detecting {
+            color: #7bed9f;
+        }
+
+        .status.error {
+            color: #ff6b6b;
+        }
+
+        .detection-section {
+            margin-top: 24px;
+        }
+        .detection-title {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #ccc;
+            margin-bottom: 12px;
+        }
+        .detection-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .detection-item {
+            background: #252540;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 2px solid #ff6b6b;
+            flex-shrink: 0;
+        }
+        .detection-item img {
+            display: block;
+            width: 160px;
+            height: auto;
+        }
+        .detection-item .label {
+            padding: 6px 8px;
+            font-size: 12px;
+            color: #aaa;
+        }
+        .detection-item {
+            cursor: pointer;
+        }
+        .detection-item:hover {
+            border-color: #ff8787;
+            box-shadow: 0 4px 12px rgba(255,107,107,0.2);
+        }
+        /* 放大展示遮罩 */
+        .lightbox-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.85);
+            z-index: 9999;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            cursor: zoom-out;
+        }
+        .lightbox-overlay.active {
+            display: flex;
+        }
+        .lightbox-overlay img {
+            max-width: 95vw;
+            max-height: 95vh;
+            object-fit: contain;
+            border-radius: 8px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+            cursor: default;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>图形标注</h1>
+    <p class="subtitle">上传或输入视频地址，播放时逐帧并行检测「穿蓝色衣服戴安全帽的人」「笔记本电脑」「显示器」「黑色水杯」，疑似截图会出现在下方列表</p>
+
+    <div class="controls">
+        <label>
+            <span class="btn secondary">选择本地视频</span>
+            <input type="file" id="fileInput" accept="video/*" />
+        </label>
+        <span style="color:#666">或</span>
+        <input type="text" id="videoUrl" placeholder="视频 URL（可选）"
+            style="padding:10px 14px; border-radius:8px; border:1px solid #444; background:#252540; color:#eee; min-width:280px" />
+        <button class="btn" id="loadUrlBtn">加载 URL</button>
+        <label style="margin-left: 8px;">
+            <input type="checkbox" id="autoDetect" checked /> 播放时自动检测
+        </label>
+        <span class="status" id="status">请加载视频并播放，使用豆包 Doubao-Seed-1.6-Vision 检测</span>
+    </div>
+
+    <div class="video-wrap" id="videoWrap" style="display:none;">
+        <video id="video" playsinline crossorigin="anonymous"></video>
+    </div>
+
+    <div class="detection-section">
+        <h2 class="detection-title">疑似截图列表</h2>
+        <div class="detection-list" id="detectionList"></div>
+    </div>
+
+    <div class="lightbox-overlay" id="lightbox">
+        <img id="lightboxImg" src="" alt="放大预览" />
+    </div>
+
+    <script>
+        (function () {
+            const video = document.getElementById('video');
+            const videoWrap = document.getElementById('videoWrap');
+            const detectionList = document.getElementById('detectionList');
+            const fileInput = document.getElementById('fileInput');
+            const videoUrl = document.getElementById('videoUrl');
+            const loadUrlBtn = document.getElementById('loadUrlBtn');
+            const autoDetect = document.getElementById('autoDetect');
+            const statusEl = document.getElementById('status');
+            const lightbox = document.getElementById('lightbox');
+            const lightboxImg = document.getElementById('lightboxImg');
+
+            let detecting = false;
+            let lastDetectTime = 0;
+            const DETECT_INTERVAL_MS = 2500;
+            const MAX_DETECT_WIDTH = 640;
+            const MAX_LIST_SIZE = 50;        // 列表最多保留数量
+
+            function isTarget(cls) {
+                if (!cls || typeof cls !== 'string') return false;
+                return isPerson(cls) || isCup(cls) || isLaptop(cls) || isMonitor(cls);
+            }
+            function isPerson(cls) {
+                return cls && (cls.includes('穿蓝色衣服戴安全帽') || (cls.includes('人') && (cls.includes('帽') || cls.includes('蓝色'))));
+            }
+            function isCup(cls) {
+                return cls && (cls.includes('黑色水杯') || (cls.includes('水杯') && cls.includes('黑')));
+            }
+            function isLaptop(cls) {
+                return cls && (cls.includes('笔记本电脑') || cls.includes('笔记本'));
+            }
+            function isMonitor(cls) {
+                return cls && (cls.includes('显示器') || cls.includes('屏幕'));
+            }
+            function formatTargetLabel(predictions) {
+                const personCount = predictions.filter(p => isPerson(p.class)).length;
+                const cupCount = predictions.filter(p => isCup(p.class)).length;
+                const laptopCount = predictions.filter(p => isLaptop(p.class)).length;
+                const monitorCount = predictions.filter(p => isMonitor(p.class)).length;
+                const parts = [];
+                if (personCount) parts.push(personCount + ' 人');
+                if (laptopCount) parts.push(laptopCount + ' 笔记本');
+                if (monitorCount) parts.push(monitorCount + ' 显示器');
+                if (cupCount) parts.push(cupCount + ' 黑色水杯');
+                return parts.length ? parts.join(' + ') : '0 疑似';
+            }
+
+            function setStatus(text, isDetecting, isError) {
+                statusEl.textContent = text;
+                statusEl.classList.toggle('detecting', !!isDetecting);
+                statusEl.classList.toggle('error', !!isError);
+            }
+
+            function addToDetectionList(sentImageCanvas, predictions) {
+                const w = sentImageCanvas.width, h = sentImageCanvas.height;
+                const canvas = document.createElement('canvas');
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(sentImageCanvas, 0, 0);
+                for (const p of predictions) {
+                    const [x, y, bw, bh] = p.bbox;
+                    const isTargetMatch = isTarget(p.class);
+                    ctx.strokeStyle = isTargetMatch ? '#ff6b6b' : '#4361ee';
+                    ctx.lineWidth = Math.max(2, Math.min(w, h) / 200);
+                    ctx.strokeRect(x, y, bw, bh);
+                    const label = (p.class || '') + ' ' + (Math.round((p.score || 0) * 100) + '%');
+                    ctx.font = Math.max(12, Math.min(w, h) / 40) + 'px sans-serif';
+                    const tw = ctx.measureText(label).width;
+                    const fh = Math.max(16, Math.min(w, h) / 30);
+                    ctx.fillStyle = isTargetMatch ? 'rgba(255,107,107,0.9)' : 'rgba(67,97,238,0.9)';
+                    ctx.fillRect(x, y - fh - 2, tw + 8, fh + 2);
+                    ctx.fillStyle = '#fff';
+                    ctx.fillText(label, x + 4, y - 4);
+                }
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+                const item = document.createElement('div');
+                item.className = 'detection-item';
+                const img = document.createElement('img');
+                img.src = dataUrl;
+                img.alt = '疑似帧';
+                const labelEl = document.createElement('div');
+                labelEl.className = 'label';
+                labelEl.textContent = '本帧 ' + formatTargetLabel(predictions);
+                item.appendChild(img);
+                item.appendChild(labelEl);
+                item.addEventListener('click', function () {
+                    lightboxImg.src = dataUrl;
+                    lightbox.classList.add('active');
+                });
+                detectionList.insertBefore(item, detectionList.firstChild);
+                while (detectionList.children.length > MAX_LIST_SIZE) {
+                    detectionList.removeChild(detectionList.lastChild);
+                }
+            }
+
+            async function runDetection() {
+                if (!video.videoWidth || detecting || !autoDetect.checked) return;
+                const now = Date.now();
+                if (now - lastDetectTime < DETECT_INTERVAL_MS) return;
+                lastDetectTime = now;
+                detecting = true;
+                setStatus('检测中…', true);
+                try {
+                    const vw = video.videoWidth, vh = video.videoHeight;
+                    const scale = MAX_DETECT_WIDTH / Math.max(vw, vh);
+                    const cw = scale >= 1 ? vw : Math.round(vw * scale);
+                    const ch = scale >= 1 ? vh : Math.round(vh * scale);
+                    const sendCanvas = document.createElement('canvas');
+                    sendCanvas.width = cw;
+                    sendCanvas.height = ch;
+                    const sendCtx = sendCanvas.getContext('2d');
+                    sendCtx.drawImage(video, 0, 0, cw, ch);
+                    const base64 = sendCanvas.toDataURL('image/jpeg', 0.75).split(',')[1];
+                    const res = await fetch('/api/detect-doubao', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ image: base64, width: cw, height: ch })
+                    });
+                    const data = await res.json();
+                    if (data.error) throw new Error(data.error);
+                    const predictions = data.predictions || [];
+                    const targetCount = predictions.filter(p => isTarget(p.class)).length;
+                    if (targetCount > 0) {
+                        addToDetectionList(sendCanvas, predictions);
+                    }
+                    setStatus('本帧 ' + formatTargetLabel(predictions) + (targetCount > 0 ? ' 已加入下方列表' : ''), false);
+                } catch (e) {
+                    setStatus('检测出错: ' + e.message, false, true);
+                } finally {
+                    detecting = false;
+                }
+            }
+
+            function onTimeUpdate() {
+                runDetection();
+            }
+
+            function bindVideo(src) {
+                video.src = src;
+                videoWrap.style.display = 'inline-block';
+                video.onloadedmetadata = function () {
+                    video.play().catch(() => { });
+                };
+                video.ontimeupdate = onTimeUpdate;
+            }
+
+            fileInput.addEventListener('change', function () {
+                const file = fileInput.files[0];
+                if (!file) return;
+                detectionList.innerHTML = '';
+                bindVideo(URL.createObjectURL(file));
+                setStatus('已加载本地视频，播放时将自动检测');
+            });
+
+            loadUrlBtn.addEventListener('click', function () {
+                const url = (videoUrl.value || '').trim();
+                if (!url) {
+                    setStatus('请输入视频 URL', false, true);
+                    return;
+                }
+                detectionList.innerHTML = '';
+                bindVideo(url);
+                setStatus('已加载视频 URL，播放时将自动检测');
+            });
+
+            lightbox.addEventListener('click', function () {
+                lightbox.classList.remove('active');
+            });
+            lightboxImg.addEventListener('click', function (e) {
+                e.stopPropagation();
+            });
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape' && lightbox.classList.contains('active')) {
+                    lightbox.classList.remove('active');
+                }
+            });
+        })();
+    </script>
+</body>
+
+</html>

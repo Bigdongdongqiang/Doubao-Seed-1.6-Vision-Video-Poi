@@ -1,0 +1,10 @@
+{
+  "description": "化工园区特殊作业监看（动火/吊装/高空）",
+  "scripts": {
+    "serve": "node server.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.3.1"
+  }
+}
